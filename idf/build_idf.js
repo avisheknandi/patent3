@@ -115,12 +115,21 @@ const P2 = G["Periodic (2 min)"], P4 = G["Periodic (4 min)"];
 const mainNames = ["Oracle (stream all)", "Periodic (2 min)", "Periodic (4 min)",
   "Send-on-Delta (2σ)", "Dual-Prediction (2σ)", "AURA (proposed)"];
 
-// Iso-accuracy traffic: smallest swept traffic at which a family reaches AURA's F1.
+// Iso-accuracy traffic: traffic at which a family reaches AURA's F1, log-linearly
+// interpolated between adjacent sweep points.
 function isoTraffic(fam) {
   const pts = Object.entries(G).filter(([k]) => k.startsWith(fam + "|"))
     .map(([, v]) => [v.tx_rate[0], v.macro_f1[0]]).sort((a, b) => a[0] - b[0]);
-  const ok = pts.filter((p) => p[1] >= A.macro_f1[0]);
-  return ok.length ? { tx: ok[0][0], reached: true } : { tx: pts[pts.length - 1][0], f1: pts[pts.length - 1][1], reached: false };
+  const t = A.macro_f1[0];
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    if (y0 < t && y1 >= t) {
+      const f = (t - y0) / (y1 - y0);
+      return { tx: Math.exp(Math.log(x0) + f * (Math.log(x1) - Math.log(x0))), reached: true };
+    }
+  }
+  if (pts[0][1] >= t) return { tx: pts[0][0], reached: true };
+  return { tx: pts[pts.length - 1][0], f1: pts[pts.length - 1][1], reached: false };
 }
 const iso = ["Periodic", "Send-on-Delta", "Dual-Prediction"].map((f) => [f, isoTraffic(f)]);
 
@@ -190,7 +199,7 @@ push(B("**C2. Silence-aware inference.** When a node is silent, the gateway know
 push(B("**C3. Counterfactual digital-twin shield.** Before an agentic action is executed, a physical digital twin is rolled forward under every candidate plan and under N intent futures sampled from the posterior. Plans whose CVaRα of occupant discomfort or safety risk exceeds a budget β are vetoed, and the cheapest admissible plan is executed instead (veto-and-repair)."));
 push(SUB("Novelty / inventive step"));
 push(B("The reporting threshold of each node is a **function of the inference uncertainty of another layer** (intent posterior × look-ahead transitions × class-conditional separability). Prior art makes the threshold a function of the node’s own signal or a fixed accuracy target."));
-push(B("**One posterior drives both** the communication policy and the risk-certified actuation. Silence is modelled exactly (C2), so the posterior stays calibrated even at about 6 % traffic, and this is what lets the shield be trusted."));
+push(B("**One posterior drives both** the communication policy and the risk-certified actuation. Optionally, silence is modelled exactly (C2), so that a stale value is never mistaken for a fresh measurement."));
 push(B("An **asymmetric, quantised downlink attention beacon** costs only one broadcast packet. It works with ultra-low-power MCU nodes (two comparisons and one subtraction per sample), unlike neural semantic encoders."));
 push(B("A **safety floor** guarantees vigilance for rare, high-cost intents (falls) without a dedicated always-on stream."));
 push(B("A **CVaR veto-and-repair shield over posterior-sampled intent futures** on a mismatched physical twin. It certifies or overrides any proposer (rule engine, MPC, RL or LLM agent)."));
@@ -198,7 +207,7 @@ push(B("A **CVaR veto-and-repair shield over posterior-sampled intent futures** 
 // 5. Objectives
 push(SEC("5. Objective(s) of Invention"));
 [
-  "To cut uplink radio traffic of ambient IoT sensor nodes by more than an order of magnitude while keeping intent-recognition accuracy close to that of full-rate streaming.",
+  "To cut uplink radio traffic of ambient IoT sensor nodes by about an order of magnitude while keeping intent-recognition accuracy close to that of full-rate streaming.",
   "To make every node’s reporting adapt to what the application currently needs to know, through a lightweight, gateway-commanded attention vector that MCU-class nodes can run.",
   "To use the information in silent intervals so the gateway’s intent posterior stays calibrated under heavy data reduction.",
   "To keep fast and reliable detection of rare emergencies (e.g., falls) under aggressive data reduction, via a safety floor.",
@@ -248,7 +257,7 @@ push(B("Other domains: Industry 5.0 worker-intent-aware cobots, vehicle cabin Am
 push(SEC("8. Experimental validation results:"));
 push(SUB("8.1 Experimental set-up and protocol"));
 push(TABLE(["Item", "Setting"], [
-  ["Testbed", "Python reference implementation of the full edge–gateway–actuation loop (open, reproducible: `python experiments/run_all.py`)."],
+  ["Testbed", "Python reference implementation of the full edge–gateway–actuation loop (reproducible with experiments/run_all.py)."],
   ["Environment", `Multimodal ambient-assisted-living home simulator: ${proto.sensors} sensors (4×PIR, power, CO₂, sound, water, light, wearable IMU, bed load) sampled every 30 s; 8 intents (SLEEP, HYGIENE, COOK, EAT, RELAX, WORK, AWAY, FALL). Each home has its own sensor signature (±30 %), routine, drift, noise, benign impact artefacts and injected falls (elevated-risk cohort).`],
   ["Training", `Gateway intent model trained on ${proto.train_homes} homes × ${proto.days} days. AURA hyper-parameters (κ = 3, c_min = 1σ, c_max = 4σ, λ = 0.10, 6 levels) tuned on 3 separate validation homes.`],
   ["Test", `${proto.test_homes} unseen homes (5 independent repetitions × 6 homes) × ${proto.days} days = ${proto.test_home_days} home-days, ${(proto.steps_per_policy / 1e6).toFixed(2)} M sensing steps (${(proto.steps_per_policy * proto.sensors / 1e6).toFixed(1)} M sensor samples) per policy; ${A.falls_total} fall events.`],
@@ -266,17 +275,21 @@ push(TABLE(["Policy", "Macro-F1", "Accuracy", "Uplink traffic", "Pkts / home / d
       pct(g.recall[0], 1), n1(g.life_mean[0] / 365)];
   }), [2350, 1350, 1000, 1150, 1250, 1050, 1596], { highlight: [5] }));
 push(CAP(`Table 1 – Mean (± std over ${proto.test_homes} unseen homes). AURA life includes the cost of receiving ${n1(A.beacons_day[0])} attention beacons/day.`));
-push(P(`**Key result:** AURA reaches a macro-F1 of **${f1(A.macro_f1[0])}**, i.e. **${pct(A.macro_f1[0] / O.macro_f1[0], 1)} of the full-stream Oracle (${f1(O.macro_f1[0])})**, while transmitting only **${pct(A.tx_rate[0], 2)}** of the samples. This is a **${red(A.tx_rate[0], O.tx_rate[0])} reduction in uplink traffic** and extends coin-cell lifetime from ${n1(O.life_mean[0] / 365)} to **${n1(A.life_mean[0] / 365)} years (×${(A.life_mean[0] / O.life_mean[0]).toFixed(1)})**. At its 2σ operating point, Send-on-Delta uses ${(SOD.tx_rate[0] / A.tx_rate[0]).toFixed(1)}× the traffic of AURA and still loses ${(100 * (A.macro_f1[0] - SOD.macro_f1[0])).toFixed(1)} F1 points. Dual-Prediction uses ${(DPS.tx_rate[0] / A.tx_rate[0]).toFixed(1)}× the traffic and is ${(100 * (A.macro_f1[0] - DPS.macro_f1[0])).toFixed(1)} points lower. Periodic reporting at 2 min uses ${(P2.tx_rate[0] / A.tx_rate[0]).toFixed(1)}× the traffic and is ${(100 * (A.macro_f1[0] - P2.macro_f1[0])).toFixed(1)} points lower.`));
+const A6 = G["AURA|6.0"];
+push(P(`**Key result:** AURA reaches a macro-F1 of **${f1(A.macro_f1[0])}**, which is **${pct(A.macro_f1[0] / O.macro_f1[0], 1)} of the full-stream Oracle (${f1(O.macro_f1[0])})**, while transmitting only **${pct(A.tx_rate[0], 2)}** of the samples. That is **${red(A.tx_rate[0], O.tx_rate[0])} less uplink traffic**, and coin-cell lifetime grows from ${n1(O.life_mean[0] / 365)} to **${n1(A.life_mean[0] / 365)} years (×${(A.life_mean[0] / O.life_mean[0]).toFixed(1)})**.`));
+push(B(`**vs. Send-on-Delta at matched traffic.** With c_max = 6σ, AURA sends ${pct(A6.tx_rate[0], 2)} of samples (Send-on-Delta 2σ: ${pct(SOD.tx_rate[0], 2)}). It reaches **F1 ${f1(A6.macro_f1[0])} vs ${f1(SOD.macro_f1[0])}** and **fall recall ${pct(A6.recall[0])} vs ${pct(SOD.recall[0])}**. Both schemes use the same zero-order-hold twin, so the gain comes from the intent-coupled dead-bands alone.`));
+push(B(`**vs. Periodic duty-cycling.** Periodic reporting every 2 min uses ${(P2.tx_rate[0] / A.tx_rate[0]).toFixed(1)}× AURA’s traffic and still loses ${(100 * (A.macro_f1[0] - P2.macro_f1[0])).toFixed(1)} F1 points.`));
+push(B(`**vs. Dual-Prediction (2σ), the strongest baseline.** AURA has slightly higher F1 (${f1(A.macro_f1[0])} vs ${f1(DPS.macro_f1[0])}; Wilcoxon p = ${pv(R.stats_gating["Dual-Prediction (2σ)"].p_f1)}) with ${red(A.tx_rate[0], DPS.tx_rate[0])} less traffic and **${red(A.fa_per_day[0], DPS.fa_per_day[0])} fewer false fall alarms** (${n2(A.fa_per_day[0])} vs ${n2(DPS.fa_per_day[0])} per day). However, its fall recall is lower (${pct(A.recall[0])} vs ${pct(DPS.recall[0])}), and battery life is similar (${n1(A.life_mean[0] / 365)} vs ${n1(DPS.life_mean[0] / 365)} years) because AURA nodes also receive about ${Math.round(A.beacons_day[0])} attention beacons per day. Dual-Prediction’s trend predictor can also be used inside AURA (Section 7.5).`));
 
 push(SUB("8.3 Accuracy–traffic Pareto front"));
 push(IMG("fig3_pareto.png", 520));
-push(CAP("Fig. 3 – Each curve sweeps one family’s tuning knob (period, dead-band, or AURA’s c_max). AURA dominates every baseline over the whole operating range."));
+push(CAP("Fig. 3 – Each curve sweeps one family’s tuning knob (period, dead-band, or AURA’s c_max). In the energy-relevant 7–15 % traffic region AURA lies above every baseline. Above about 18 % traffic, all event-based schemes converge towards the Oracle."));
 push(TABLE(["Baseline family", "Traffic needed to match AURA’s F1", "Traffic saving of AURA"],
   iso.map(([f, r]) => r.reached
     ? [f, pct(r.tx, 2), `${(r.tx / A.tx_rate[0]).toFixed(1)}× less traffic (${red(A.tx_rate[0], r.tx)})`]
     : [f, `not reached in the sweep (best F1 ${f1(r.f1)} at ${pct(r.tx, 1)})`, `> ${(r.tx / A.tx_rate[0]).toFixed(1)}× less traffic`]),
   [2600, 3600, CONTENT_W - 6200]));
-push(CAP("Table 2 – Iso-accuracy comparison: smallest swept traffic at which each baseline reaches AURA’s macro-F1."));
+push(CAP("Table 2 – Iso-accuracy comparison: traffic each baseline needs to reach AURA’s macro-F1 (log-linear interpolation between adjacent sweep points)."));
 
 push(SUB("8.4 Emergency (fall) detection under data reduction"));
 push(TABLE(["Policy", "Falls detected", "Recall", "Mean latency (s)", "95th-pct latency (s)", "False alarms / day"],
@@ -287,26 +300,27 @@ push(TABLE(["Policy", "Falls detected", "Recall", "Mean latency (s)", "95th-pct 
   }), [2500, 1300, 1100, 1500, 1600, CONTENT_W - 8000], { highlight: [5] }));
 push(CAP("Table 3 – Fall detection (alarm when P(FALL) > 0.5 during the event), pooled over all test homes."));
 push(IMG("fig4_fall_trace.png", 560));
-push(CAP("Fig. 4 – A fall episode: (a) raw streams, (b) AURA’s attention vector. Dead-bands of the fall-discriminating sensors tighten after the impact. (c) The gateway’s P(FALL) for Oracle, Send-on-Delta and AURA."));
+push(CAP("Fig. 4 – A fall episode: (a) raw streams; (b) AURA’s attention vector, where the dead-bands of the PIR, sound and bed-load sensors tighten when the intent becomes ambiguous; (c) the gateway’s P(FALL) for Oracle, Send-on-Delta and AURA."));
 
 push(SUB("8.5 Battery lifetime"));
 push(IMG("fig6_lifetime.png", 500));
 push(CAP(`Fig. 5 – Projected CR2032 lifetime per node (mean and worst node). AURA: ${n1(A.life_mean[0] / 365)} yr mean, ${n1(A.life_min[0] / 365)} yr worst node, vs ${n1(O.life_mean[0] / 365)} / ${n1(O.life_min[0] / 365)} yr for streaming.`));
 
-push(SUB("8.6 Ablation study – every claimed element contributes"));
+push(SUB("8.6 Ablation study"));
 const abl = ["AURA (full)", "– interval (silence) likelihood", "– intent-coupled dead-bands (fixed 2σ)", "– look-ahead prediction", "– safety floor"];
 push(TABLE(["Variant", "Macro-F1", "Uplink traffic", "Fall recall", "Mean fall latency (s)", "Node life (yr)"],
   abl.map((n) => {
     const g = G[n];
     return [n, pm(g.macro_f1), pct(g.tx_rate[0], 2), pct(g.recall[0], 1), Math.round(g.delay_mean_s).toString(), n1(g.life_mean[0] / 365)];
   }), [3300, 1350, 1250, 1100, 1400, CONTENT_W - 8400], { highlight: [0] }));
-push(CAP("Table 4 – Removing any element of C1/C2 lowers accuracy, safety, or efficiency."));
+push(CAP("Table 4 – Ablation at the default operating point (c_max = 4σ)."));
+push(P(`**Reading the ablation.** Replacing the intent-coupled dead-bands with a fixed 2σ band (same twin and likelihood) costs ${(100 * (A.macro_f1[0] - G["– intent-coupled dead-bands (fixed 2σ)"].macro_f1[0])).toFixed(1)} F1 points and ${(100 * (A.recall[0] - G["– intent-coupled dead-bands (fixed 2σ)"].recall[0])).toFixed(1)} points of fall recall. At almost the same traffic, AURA with c_max = 6σ keeps F1 ${f1(A6.macro_f1[0])}, so this confirms the core element C1. Removing the look-ahead or the safety floor lowers F1 and fall recall, and the safety floor also widens the 95th-percentile fall latency (${Math.round(G["– safety floor"].delay_p95_s)} s vs ${Math.round(A.delay_p95_s)} s). Both variants also transmit less, however, so part of their effect is a shift along the Pareto front. The interval (silence) likelihood C2 showed **no measurable benefit** in this simulator (F1 ${f1(G["– interval (silence) likelihood"].macro_f1[0])} without it). It is therefore kept only as an optional dependent feature, to be re-evaluated on real data.`));
 push(IMG("fig5_ablation.png", 620));
 push(CAP("Fig. 6 – Ablation: macro-F1, traffic and fall recall."));
 
 push(SUB("8.7 Per-intent recognition"));
 push(IMG("fig8_per_class.png", 560));
-push(CAP("Fig. 7 – Per-intent F1. AURA keeps short, safety-relevant intents (HYGIENE, FALL) close to the Oracle, which is where fixed dead-bands lose most."));
+push(CAP("Fig. 7 – Per-intent F1. Among the reduced-traffic schemes, AURA has the highest F1 on the safety-critical FALL intent (Oracle sets the upper bound). Fixed dead-bands lose most on FALL and EAT."));
 
 push(SUB("8.8 Counterfactual digital-twin shield – proactive, safe actuation"));
 const twNames = ["Static schedule", "Reactive occupancy (ECO idle)", "Reactive occupancy (standby idle)",
@@ -318,9 +332,9 @@ push(TABLE(["Controller", "Energy (kWh/day)", "Discomfort (K·h/day)", "% time c
       n2(t.interventions_day[0]), n2(t.fall_max_deficit[0])];
   }), [2900, 1400, 1450, 1050, 1200, CONTENT_W - 8000], { highlight: [5] }));
 push(CAP(`Table 5 – 4-zone heating (${proto.twin_homes} homes × 14 days). All intent-driven controllers use the AURA-gated posterior (${pct(A.tx_rate[0], 1)} traffic).`));
-push(P(`**Key result:** compared with the static schedule, the AURA shield saves **${red(SH.energy_kwh_day[0], SCH.energy_kwh_day[0])} heating energy**. Compared with the greedy intent agent, it cuts discomfort by **${red(SH.discomfort_kh_day[0], GRE.discomfort_kh_day[0])}** and manual overrides by **${red(SH.interventions_day[0], GRE.interventions_day[0])}**. The worst cold exposure of a fallen occupant drops from ${n2(GRE.fall_max_deficit[0])} K (greedy) to **${n2(SH.fall_max_deficit[0])} K**. The shield vetoed and repaired ${n1(SH.veto_pct[0])} % of the greedy agent’s zone proposals. Compared with reactive control that keeps idle zones on standby, the shield uses less energy (${n1(SH.energy_kwh_day[0])} vs ${n1(RST.energy_kwh_day[0])} kWh/day) **and** has ${(RST.discomfort_kh_day[0] / SH.discomfort_kh_day[0]).toFixed(1)}× less discomfort, so it Pareto-dominates. Using the tail risk (CVaR) instead of the mean lowers discomfort by ${red(SH.discomfort_kh_day[0], MEAN.discomfort_kh_day[0])} for ${n1(100 * (SH.energy_kwh_day[0] / MEAN.energy_kwh_day[0] - 1))} % more energy.`));
+push(P(`**Key result:** compared with the static schedule, the AURA shield saves **${red(SH.energy_kwh_day[0], SCH.energy_kwh_day[0])} heating energy**. Compared with the greedy intent agent, it cuts discomfort by **${red(SH.discomfort_kh_day[0], GRE.discomfort_kh_day[0])}** and manual overrides by **${red(SH.interventions_day[0], GRE.interventions_day[0])}**. The worst cold exposure of a fallen occupant drops from ${n2(GRE.fall_max_deficit[0])} K (greedy) to **${n2(SH.fall_max_deficit[0])} K**. The shield vetoed and repaired ${n1(SH.veto_pct[0])} % of the greedy agent’s zone proposals. Compared with reactive control that keeps idle zones on standby, the shield uses less energy (${n1(SH.energy_kwh_day[0])} vs ${n1(RST.energy_kwh_day[0])} kWh/day) **and** has ${(RST.discomfort_kh_day[0] / SH.discomfort_kh_day[0]).toFixed(1)}× less discomfort, so it Pareto-dominates. Using the tail risk (CVaR) instead of the mean lowers discomfort modestly, by ${red(SH.discomfort_kh_day[0], MEAN.discomfort_kh_day[0])} for ${n1(100 * (SH.energy_kwh_day[0] / MEAN.energy_kwh_day[0] - 1))} % more energy.`));
 push(IMG("fig7_energy_comfort.png", 520));
-push(CAP("Fig. 8 – Energy–comfort plane. The CVaR budget β traces a front that lies below and to the left of all baselines."));
+push(CAP("Fig. 8 – Energy–comfort plane. The CVaR budget β trades energy against comfort. At β = 0.002 the shield is more comfortable than the static schedule and uses 11 % less energy, and every β setting has far less discomfort than reactive or greedy control."));
 push(IMG("fig9_bathroom_day.png", 560));
 push(CAP("Fig. 9 – One day of the bathroom zone. Reactive control heats only after entry (cold bathroom). The schedule heats all day. The AURA shield pre-conditions ahead of likely use."));
 
@@ -330,7 +344,7 @@ push(TABLE(["Shield variant", "Energy (kWh/day)", "Discomfort (K·h/day)", "Over
     ["AURA shield on Send-on-Delta stream", SSOD], ["AURA shield with 25 % twin-parameter mismatch", SMIS]]
     .map(([n, t]) => [n, n1(t.energy_kwh_day[0]), n2(t.discomfort_kh_day[0]), n2(t.interventions_day[0]), n2(t.fall_max_deficit[0])]),
   [3700, 1400, 1600, 1400, CONTENT_W - 8100], { highlight: [0] }));
-push(CAP("Table 6 – The shield on the AURA-gated stream performs close to the shield on the full Oracle stream, and better than on a Send-on-Delta stream with more traffic. It stays effective with 25 % twin mismatch."));
+push(CAP("Table 6 – Shield performance is nearly unchanged whether it is fed the AURA-gated stream (10.8 % traffic), the full Oracle stream, or a Send-on-Delta stream, and with 25 % twin-parameter mismatch. The shield is robust to the quality of the upstream stream and of the twin."));
 
 push(SUB("8.10 Statistical significance"));
 const SG = R.stats_gating, ST = R.stats_twin;
@@ -346,17 +360,17 @@ push(CAP(`Table 8 – Two-sided Wilcoxon signed-rank tests, paired over ${proto.
 push(SUB("8.11 Summary of validated claims"));
 push(B(`**${red(A.tx_rate[0], O.tx_rate[0])} less uplink traffic** with **${pct(A.macro_f1[0] / O.macro_f1[0], 1)} of full-stream macro-F1** (${f1(A.macro_f1[0])} vs ${f1(O.macro_f1[0])}).`));
 push(B(`**×${(A.life_mean[0] / O.life_mean[0]).toFixed(1)} battery life** (${n1(A.life_mean[0] / 365)} years on a CR2032), with the downlink attention beacons already included.`));
-push(B(`Fall recall **${pct(A.recall[0], 1)}** (Oracle ${pct(O.recall[0], 1)}), with ${n2(A.fa_per_day[0])} false alarms/day.`));
+push(B(`Versus fixed-dead-band Send-on-Delta at matched traffic: **+${(100 * (A6.macro_f1[0] - SOD.macro_f1[0])).toFixed(1)} F1 points** and **+${(100 * (A6.recall[0] - SOD.recall[0])).toFixed(1)} points fall recall**. Versus Dual-Prediction: comparable accuracy with less traffic and ${red(A.fa_per_day[0], DPS.fa_per_day[0])} fewer false alarms, but lower fall recall.`));
 push(B(`Proactive heating with **${red(SH.energy_kwh_day[0], SCH.energy_kwh_day[0])} energy saving** vs the schedule and **${red(SH.discomfort_kh_day[0], GRE.discomfort_kh_day[0])} less discomfort** than a greedy agent.`));
-push(B("Each claimed element is supported by the ablation study, and the results are statistically significant over unseen homes."));
+push(B("The core gating element (C1) and the shield (C3) are supported by ablations and paired significance tests over unseen homes. The silence likelihood (C2) was neutral in this study."));
 push(SUB("8.12 Validity note and next steps"));
-push(P("All results above come from a high-fidelity simulation with real-world-calibrated parameters (radio energy, thermal RC constants, sensor noise and drift). They were obtained with held-out test homes, independent seeds and paired significance tests, which establishes an experimental proof of concept (TRL 3). Planned next steps: (i) replay on public smart-home datasets (CASAS Aruba/Milan, ARAS, Orange4Home); (ii) a physical testbed with nRF52840 / CC2652 802.15.4 nodes and a Raspberry-Pi gateway, measuring current with a power analyser; (iii) a pilot in an assisted-living facility.", { run: { size: 20 } }));
+push(P("All results above come from a simulation whose parameters (radio energy, thermal RC constants, sensor noise and drift) were chosen from typical published values, not measured on hardware. They were obtained with held-out test homes, independent seeds and paired significance tests, which establishes an experimental proof of concept (TRL 3). Limitations: the gating gain over the best classical baseline (dual prediction) is modest in this simulator, the silence likelihood was neutral, and absolute numbers depend on the simulated sensor and thermal models. Planned next steps: (i) replay on public smart-home datasets (CASAS Aruba/Milan, ARAS, Orange4Home); (ii) a physical testbed with nRF52840 / CC2652 802.15.4 nodes and a Raspberry-Pi gateway, measuring current with a power analyser; (iii) a pilot in an assisted-living facility.", { run: { size: 20 } }));
 
 // 9. Protection
 push(SEC("9. What aspect(s) of the invention need(s) protection?"));
 [
   "**System claim:** a system with a plurality of battery-powered sensor nodes and an edge gateway. Each node holds a twin predictor mirrored at the gateway and a programmable dead-band, and transmits a sample only if its residual exceeds the dead-band. The gateway (i) maintains a posterior over occupant intents, (ii) computes for each sensor a discriminability score from a look-ahead intent distribution and class-conditional sensor statistics, (iii) maps the score to a per-sensor dead-band, and (iv) transmits the dead-bands to the nodes as an attention vector.",
-  "The **silence-aware (interval) likelihood**: for every silent node, the class-conditional likelihood integrated over the band [x̂ − θ, x̂ + θ], used inside a Bayesian intent filter.",
+  "(Dependent) The **silence-aware (interval) likelihood**: for every silent node, the class-conditional likelihood integrated over the band [x̂ − θ, x̂ + θ], used inside a Bayesian intent filter.",
   "The **safety floor**: a minimum probability mass on one or more emergency intents is mixed into the look-ahead distribution before the discriminability is computed. This keeps emergency-revealing sensors at a tightened dead-band.",
   "The **asymmetric quantised attention beacon**: dead-band levels are quantised, tightening is applied at once and relaxing is rate-limited, and the vector is carried in broadcast beacons or ACK piggy-backing.",
   "The **counterfactual digital-twin shield**: N intent futures are sampled from the gateway posterior, a physical digital twin is simulated per candidate actuation plan, CVaR_α of discomfort or safety cost is computed, and an agent’s proposal is certified or vetoed and repaired with the least-cost admissible plan.",

@@ -26,7 +26,7 @@ def fall_detection(labels, posts, onsets, tau=0.5):
         idx = np.flatnonzero(alarm[s:e])
         if idx.size:
             hit += 1
-            delays.append(idx[0] * STEP_S)
+            delays.append(int(idx[0]) * STEP_S)
     rising = np.flatnonzero(alarm & ~np.r_[False, alarm[:-1]])
     false_alarms = int((~in_event[rising]).sum())
     days = T / STEPS_PER_DAY

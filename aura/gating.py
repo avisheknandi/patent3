@@ -43,6 +43,7 @@ def run_policy(home, hmm, pol, keep_theta=False):
     if kind == "aura":
         pol = {**AURA_DEFAULTS, **pol}
     interval = pol.get("interval", False)
+    trend = kind == "dps" or pol.get("predictor") == "trend"
     adaptive = kind == "aura" and pol.get("adaptive", True)
 
     X, hours = home.x, home.hour
@@ -98,7 +99,7 @@ def run_policy(home, hmm, pol, keep_theta=False):
                 tx += 1
             xhat = ref
         else:
-            if kind == "dps":
+            if trend:
                 pred = np.maximum(0, ref + slope * np.minimum(t - t_ref, 20))
             else:
                 pred = ref
@@ -107,7 +108,7 @@ def run_policy(home, hmm, pol, keep_theta=False):
                 sent[:] = False
             if sent.any():
                 tx += sent
-                if kind == "dps":
+                if trend:
                     dt = np.maximum(t - t_ref, 1)
                     new_slope = (xm - ref) / dt
                     slope = np.where(sent, 0.5 * slope + 0.5 * new_slope, slope)

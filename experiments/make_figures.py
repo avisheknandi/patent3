@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 from matplotlib.patches import FancyBboxPatch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -161,6 +162,9 @@ def pareto(res):
     ax.axhline(o, color=MUTED, ls="--", lw=1)
     ax.text(0.9, o + 0.004, f"Oracle, 100 % traffic (F1 = {o:.3f})", color=INK2, fontsize=7.5)
     ax.set_xscale("log")
+    ax.set_xticks([2, 3, 5, 10, 20, 50])
+    ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    ax.minorticks_off()
     ax.set_xlabel("Uplink traffic (% of samples transmitted, log scale)")
     ax.set_ylabel("Intent recognition macro-F1")
     ax.set_title("Accuracy–traffic Pareto front (420 unseen home-days)", loc="left")

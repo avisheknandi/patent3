@@ -185,9 +185,9 @@ def main():
     with open(os.path.join(ROOT, "results", "results.json"), "w") as f:
         json.dump(res, f, indent=1)
     with open(os.path.join(ROOT, "results", "gating_runs.json"), "w") as f:
-        json.dump(grows, f)
+        json.dump(grows, f, default=float)
     with open(os.path.join(ROOT, "results", "twin_runs.json"), "w") as f:
-        json.dump(trows, f)
+        json.dump(trows, f, default=float)
     print(f"total {time.time() - t0:.0f}s")
 
 
