@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+idf/node_modules/
+results/run_log.txt
